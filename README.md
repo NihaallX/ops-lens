@@ -14,6 +14,22 @@ python backend\scripts\load_data.py --input-dir generated --quarantine-dir quara
 pytest
 ```
 
+Install the PostgreSQL driver explicitly with:
+
+```powershell
+python -m pip install "psycopg[binary]" sqlalchemy
+```
+
+For local PostgreSQL, use Docker Compose:
+
+```powershell
+docker compose up -d
+python backend\scripts\load_data.py --input-dir generated --quarantine-dir quarantine --database-url $env:DATABASE_URL
+python backend\scripts\check_counts.py
+```
+
+For external PostgreSQL such as Neon, set `DATABASE_URL` in the local `.env` or PowerShell environment. The loader accepts either `postgresql://...` or `postgresql+psycopg://...` and uses psycopg v3. Then run the same loader and count commands.
+
 The generator defaults to a deterministic 12-month window ending `2026-09`. Use `--end-month YYYY-MM` to select another fixed window. Generated files are on-demand artifacts and are not committed.
 
 ## Dataset and assumptions
@@ -27,4 +43,3 @@ The dataset is entirely synthetic. It uses a fixed seed, fictional suppliers/pro
 ## Method notes
 
 Phase 1 only establishes generation, validation, and loading. Later phases will add analytics, API, dashboard, and assistant layers.
-

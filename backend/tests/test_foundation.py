@@ -2,6 +2,8 @@ import json
 import pandas as pd
 import os
 import pytest
+import tempfile
+from pathlib import Path
 from data.generate_data import generate
 from app.analytics.validation import validate_orders
 from scripts.load_data import load
@@ -14,7 +16,8 @@ def test_deterministic_and_ground_truth(tmp_path):
     for name in ["purchase_orders.csv","suppliers.csv","regions.csv","products.csv","inventory_snapshots.csv","anomalies_ground_truth.json"]:
         assert (a/name).read_bytes()==(b/name).read_bytes()
     truth=json.loads((a/"anomalies_ground_truth.json").read_text()); assert len(truth)==5
-    assert all(set(x)>= {"id","type","entity_ids","start_date","end_date","metric","direction","expected_magnitude","what","where","when","magnitude"} for x in truth)
+    assert all(set(x)>= {"id","type","entity_ids","start_date","end_date","period_granularity","metric","direction","expected_magnitude","what","where","when","magnitude"} for x in truth)
+    assert isinstance(truth[0]["expected_magnitude"], dict); assert "cleaning chemicals" in truth[2]["entity_ids"]
 
 def test_planted_signals_and_quarantine(tmp_path):
     out=tmp_path/"data"; d=generate(out); orders=d["orders"].copy(); orders["month"]=pd.to_datetime(orders.order_date).dt.to_period("M")
@@ -26,6 +29,10 @@ def test_planted_signals_and_quarantine(tmp_path):
     inv=d["inventory"]; west=inv[(inv.region_id=="R01") & (inv.product_id.str.match("P00"))]; assert west.units_on_hand.mean() > west.reorder_level.mean()
     s07=orders[(orders.supplier_id=="S07") & orders.product_id.isin(["P011","P012"]) & orders.month.isin([pd.Period("2026-05",freq="M"),pd.Period("2026-06",freq="M")])]; assert len(s07)>0
     result=validate_orders(orders,d["suppliers"],d["products"],d["regions"]); assert len(result.quarantined)>0; assert result.quarantined.reason.notna().all(); assert result.report["accepted"]+result.report["quarantined"]==len(orders)
+    assert pd.to_datetime(orders.delivered_date).max() <= pd.Timestamp("2026-09-30")
+
+def test_delivered_dates_do_not_exceed_window(tmp_path):
+    d=_frames(tmp_path); assert pd.to_datetime(d["orders"].delivered_date).max() <= pd.Timestamp("2026-09-30")
 
 def test_null_required_field_rule(tmp_path):
     d=_frames(tmp_path); r=validate_orders(d["orders"],d["suppliers"],d["products"],d["regions"]); assert r.report["checks"]["null_required_field"] == 2
@@ -62,7 +69,9 @@ def test_loader_counts_and_quarantine_file(tmp_path):
     out=tmp_path/"data"; report=load(out,tmp_path/"quarantine"); assert report["accepted"]==7997 and report["quarantined"]==3; q=pd.read_csv(tmp_path/"quarantine"/"purchase_orders.csv"); assert q.reason.notna().all()
 
 @pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_URL not configured")
-def test_postgres_integration(tmp_path):
+def test_postgres_integration():
     from sqlalchemy import create_engine, text
-    d=_frames(tmp_path); load(tmp_path/"data",tmp_path/"quarantine",os.environ["DATABASE_URL"]); e=create_engine(os.environ["DATABASE_URL"])
+    with tempfile.TemporaryDirectory(dir=Path.cwd()/".test_tmp") as workspace:
+        root=Path(workspace); d=_frames(root); load(root/"data",root/"quarantine",os.environ["DATABASE_URL"])
+    e=create_engine(os.environ["DATABASE_URL"])
     with e.connect() as c: assert c.execute(text("select count(*) from purchase_orders")).scalar() >= 7997

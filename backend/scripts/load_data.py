@@ -14,9 +14,16 @@ def load(input_dir: Path, quarantine_dir: Path, database_url: str | None = None)
         raise RuntimeError(f"rejected input batch: {exc}") from exc
     result=validate_orders(frames["purchase_orders"],frames["suppliers"],frames["products"],frames["regions"]); quarantine_dir.mkdir(parents=True,exist_ok=True); result.quarantined.to_csv(quarantine_dir/"purchase_orders.csv",index=False); (quarantine_dir/"validation_report.json").write_text(json.dumps(result.report,indent=2),encoding="utf-8")
     if database_url:
+        if database_url.startswith("postgresql://"):
+            database_url = "postgresql+psycopg://" + database_url.removeprefix("postgresql://")
         engine=create_engine(database_url)
         schema=Path(__file__).parents[1]/"sql"/"schema.sql"
-        with engine.begin() as connection: connection.exec_driver_sql(schema.read_text(encoding="utf-8"))
+        with engine.begin() as connection:
+            connection.exec_driver_sql(schema.read_text(encoding="utf-8"))
+            connection.exec_driver_sql("TRUNCATE TABLE purchase_orders, inventory_snapshots, suppliers, regions, products CASCADE")
+        for column in ["order_date", "promised_date", "delivered_date"]:
+            result.accepted[column] = pd.to_datetime(result.accepted[column]).dt.date
+        frames["inventory_snapshots"]["snapshot_date"] = pd.to_datetime(frames["inventory_snapshots"]["snapshot_date"]).dt.date
         frames["suppliers"].to_sql("suppliers",engine,if_exists="append",index=False)
         frames["regions"].to_sql("regions",engine,if_exists="append",index=False)
         frames["products"].to_sql("products",engine,if_exists="append",index=False)
