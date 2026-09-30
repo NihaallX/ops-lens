@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+generated/
+run1/
+run2/
+quarantine/
+.env
